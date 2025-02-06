@@ -1,6 +1,7 @@
 from openai import OpenAI
 import pandas as pd
 import math
+import json
 
 # Configura tu API key
 
@@ -12,126 +13,144 @@ def iniciar_cliente(api_key):
 
 def generar_preguntas_por_bloques(client, tema_general: str, subtema: str, total_preguntas: int, preguntas_por_bloque: int = 25) -> list:
     """
-    Genera `total_preguntas` preguntas en varios bloques (chunks) de
-    tamaño `preguntas_por_bloque`, para evitar exceder el límite de tokens.
-    
-    Retorna una lista de strings, donde cada elemento es una pregunta.
+    Genera `total_preguntas` en bloques utilizando un formato JSON estructurado.
+    Cada bloque se solicita especificando un rango de números de pregunta.
     """
-
     todas_las_preguntas = []
-    
-    # Cálculo de cuántas iteraciones (bloques) necesitamos
     num_bloques = math.ceil(total_preguntas / preguntas_por_bloque)
-    
-    # Iniciamos un contador de preguntas
     pregunta_inicial = 1
-    
+
     for bloque in range(num_bloques):
-        # Determinamos la pregunta final de este bloque
         pregunta_final = min(pregunta_inicial + preguntas_por_bloque - 1, total_preguntas)
-        
-        # Construimos el prompt para este bloque
+
         prompt_bloque = f"""
 Eres un profesor y experto en {tema_general}.
-Necesito que generes preguntas para el subtema "{subtema}".
-Ya se han generado preguntas previas (o ninguna, si es la primera vez), ahora necesito específicamente
-las preguntas desde la #{pregunta_inicial} hasta la #{pregunta_final}.
+Estoy preparando un examen a manera de evaluación de mis alumnos. En particular, este examen abordará el subtema "{subtema}".
+Genera las preguntas desde la #{pregunta_inicial} hasta la #{pregunta_final}.
 
-Instrucciones específicas:
-1. Todas las preguntas deben estar enfocadas en el subtema "{subtema}".
-2. No repitas preguntas anteriores.
-3. Solo escribe las preguntas numeradas del {pregunta_inicial} al {pregunta_final}.
-4. No incluyas introducciones, explicaciones adicionales o respuestas. Solo las preguntas.
+Instrucciones:
+1. Las preguntas deben enfocarse en el subtema "{subtema}".
+2. No repitas preguntas de bloques anteriores.
+3. Devuelve la respuesta únicamente en formato JSON, con una lista llamada "preguntas". 
+   Cada elemento de la lista debe ser un objeto con las propiedades "numero" y "texto".
 
-Ejemplo de formato:
-{pregunta_inicial}) Primera pregunta...
-{pregunta_inicial+1}) Segunda pregunta...
-...
-{pregunta_final}) Última pregunta.
-
-Tema general: {tema_general}
-Subtema: {subtema}
-Rango de preguntas: {pregunta_inicial} - {pregunta_final}
-""".strip()
-        
-        # Llamada al modelo
-        response = client.chat.completions.create(
+Ejemplo del formato de salida:
+{{
+  "preguntas": [
+    {{ "numero": {pregunta_inicial}, "texto": "Primera pregunta..." }},
+    {{ "numero": {pregunta_inicial+1}, "texto": "Segunda pregunta..." }},
+    ...
+    {{ "numero": {pregunta_final}, "texto": "Última pregunta." }}
+  ]
+}}
+"""
+        try:
+            response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content":"Sigue cuidadosamente las instrucciones dadas."},
+                    {"role": "system", "content": "Sigue cuidadosamente las instrucciones dadas."},
                     {"role": "user", "content": prompt_bloque}
                 ],
-                max_tokens=2000,
+                max_completion_tokens=16384,
                 temperature=0.7
             )
-        
-        # Extraer el texto del modelo
+        except Exception as e:
+            print(f"Error en la llamada a la API: {e}")
+            break
+
         texto_bloque = response.choices[0].message.content.strip()
-        
-        # Podemos dividir el texto en líneas y filtrar solo las que parezcan preguntas
-        # Esto depende de cómo regresa el modelo el output. 
-        # Por ejemplo, si el modelo sigue el formato "1) ...", "2) ...", etc.
-        
-        lineas = texto_bloque.split("\n")
-        
-        # Filtramos las líneas vacías y las limpiamos
-        lineas_limpias = [l.strip() for l in lineas if l.strip() != ""]
-        
-        # Agregamos todas esas preguntas a la lista global
-        todas_las_preguntas.extend(lineas_limpias)
-        
-        # Actualizamos para la siguiente iteración
+
+        try:
+            data = json.loads(texto_bloque)
+            preguntas_bloque = data.get("preguntas", [])
+            todas_las_preguntas.extend(preguntas_bloque)
+        except json.JSONDecodeError as e:
+            print(f"Error al parsear JSON: {e}")
+            # Opcional: aquí se podría reintentar o guardar el error para depuración
+            continue
+
         pregunta_inicial = pregunta_final + 1
-    
+
     return todas_las_preguntas
 
-def responder_pregunta(client, pregunta, tema, subtema):
-    prompt = f"""
-    Tu tarea es recibir una pregunta de {subtema} y generar:
-    1. La respuesta correcta.
-    2. Tres opciones incorrectas pero plausibles.
-    3. Una explicación detallada de por qué la respuesta correcta es la adecuada.
-
-    Formato de salida (usa `|` como separador):
-    Pregunta | Respuesta correcta | Opción 1 | Opción 2 | Opción 3 | Explicación
-
-    Aquí tienes una pregunta para procesar: {pregunta}
+def responder_pregunta(client, pregunta, tema, subtema, max_iter=3):
     """
+    Recibe una pregunta y genera:
+      1. La respuesta correcta.
+      2. Tres opciones incorrectas pero plausibles.
+      3. Una explicación detallada.
+    La respuesta se devuelve en formato JSON.
+    """
+    prompt = f"""
+Tu tarea es recibir la siguiente pregunta y generar:
+1. La respuesta correcta.
+2. Tres opciones incorrectas pero plausibles.
+3. Una explicación detallada de por qué la respuesta correcta es la adecuada.
+4. Procura que las cuatro respuestas de cada pregunta tengan aproximadamente la misma extensión entre sí.
 
+Devuelve la respuesta únicamente en formato JSON con el siguiente formato:
+{{
+  "pregunta": "{pregunta}",
+  "respuesta_correcta": "...",
+  "opciones_incorrectas": ["...", "...", "..."],
+  "explicacion": "..."
+}}
 
-    try:
-        respuesta_completa = ""
-        continuar = True
+Aquí tienes la pregunta a procesar: {pregunta}
+"""
+    respuesta_completa = ""
+    iteracion = 0
 
-        # Primera solicitud a la API
-        while continuar:
+    while iteracion < max_iter:
+        try:
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": f"Eres un generador de problemas de {tema} especializado en {subtema}."},
                     {"role": "user", "content": prompt if not respuesta_completa else "Continúa la respuesta:"}
                 ],
-                max_tokens=500,
+                max_completion_tokens=16384,
                 temperature=0.7
             )
+        except Exception as e:
+            return f"Error en la llamada a la API: {e}"
 
-            nueva_respuesta = response.choices[0].message.content.strip()
-            respuesta_completa += nueva_respuesta
-            continuar = nueva_respuesta.endswith("...")
+        nueva_respuesta = response.choices[0].message.content.strip()
+        respuesta_completa += " " + nueva_respuesta
 
-        return respuesta_completa
+        try:
+            resultado = json.loads(respuesta_completa)
+            if all(key in resultado for key in ["pregunta", "respuesta_correcta", "opciones_incorrectas", "explicacion"]):
+                return resultado
+        except json.JSONDecodeError:
+            # Si no se puede parsear aún, se continua el bucle
+            pass
 
-    except Exception as e:
-        return f"Error al generar la respuesta: {e}"
+        iteracion += 1
+
+    return f"Error al generar la respuesta completa después de {max_iter} intentos."
 
 def procesar_respuesta(respuesta):
+    """
+    Procesa la respuesta en formato JSON y la convierte en un DataFrame con columnas definidas.
+    """
     try:
-        elementos = [x.strip() for x in respuesta.split('|')]
-        if len(elementos) != 6:
+        if isinstance(respuesta, str):
+            respuesta = json.loads(respuesta)
+        columnas = ["Pregunta", "Respuesta correcta", "Opcion 1", "Opcion 2", "Opcion 3", "Explicacion"]
+        if all(key in respuesta for key in ["pregunta", "respuesta_correcta", "opciones_incorrectas", "explicacion"]):
+            data = [
+                respuesta["pregunta"],
+                respuesta["respuesta_correcta"],
+                respuesta["opciones_incorrectas"][0] if len(respuesta["opciones_incorrectas"]) > 0 else "",
+                respuesta["opciones_incorrectas"][1] if len(respuesta["opciones_incorrectas"]) > 1 else "",
+                respuesta["opciones_incorrectas"][2] if len(respuesta["opciones_incorrectas"]) > 2 else "",
+                respuesta["explicacion"]
+            ]
+            df = pd.DataFrame([data], columns=columnas)
+            return df
+        else:
             return None
-        columnas = ["Pregunta", "Respuesta correcta", "Opción 1", "Opción 2", "Opción 3", "Explicación"]
-        df = pd.DataFrame([elementos], columns=columnas)
-        return df
     except Exception as e:
         print(f"Error al procesar la respuesta: {e}")
         return None

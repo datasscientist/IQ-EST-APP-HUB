@@ -5,14 +5,15 @@ from src.pages.generar_examenes import show as show_generar_examenes
 
 def main():
     st.title("IQ-EST ACADEMY - APP HUB")
-    tab1, tab2 = st.tabs(["Formato Quizes", "Generador de Exámenes"])
+    tab1, tab2 = st.tabs(["Generador de Exámenes","Formato Quizes"])
 
     with tab1:
-        show_formatear_quizes()
-
-    with tab2:
         show_generar_examenes()
 
+    with tab2:
+        show_formatear_quizes()
+
+    
 def validacionUsuario():
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False

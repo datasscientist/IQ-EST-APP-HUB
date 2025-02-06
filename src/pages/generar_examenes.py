@@ -1,97 +1,140 @@
-import io
-import zipfile
+import io 
 import streamlit as st
 import pandas as pd
-from src.utils.create_exams import generar_preguntas_por_bloques, responder_pregunta, procesar_respuesta, iniciar_cliente
+from src.utils.create_exams import iniciar_cliente, generar_preguntas_por_bloques, responder_pregunta
 
 def show():
-    st.header("Generador de Exámenes con ChatGPT (o lógica propia)")
+    st.header("Generador de Exámenes Completos con IA")
+    st.markdown(
+        """
+        Sube un archivo Excel que contenga las siguientes columnas:  
+        **Tema General**, **Sub Tema**, **Preguntas por Subtema**.  
+        Cada fila representará un subtema para el cual se generarán preguntas, respuestas y explicaciones.
+        """
+    )
+    
+    # Entrada: archivo Excel y API Key
+    uploaded_file = st.file_uploader("Sube el archivo Excel", type=["xlsx"])
+    api_key = st.text_input("API Key de OpenAI", type="password")
+    
+    if uploaded_file and api_key:
+        # Leer el archivo Excel
+        try:
+            df_input = pd.read_excel(uploaded_file)
+        except Exception as e:
+            st.error(f"Error al leer el archivo: {e}")
+            return
+        
+        # Validar que se encuentren las columnas requeridas
+        required_columns = ["Tema General", "Sub Tema", "Preguntas por Subtema"]
+        if not all(col in df_input.columns for col in required_columns):
+            st.error(f"El archivo debe contener las columnas: {', '.join(required_columns)}")
+            return
+        
+        # Inicializar el cliente de OpenAI
+        try:
+            client = iniciar_cliente(api_key)
+        except Exception as e:
+            st.error(f"Error al iniciar el cliente de OpenAI: {e}")
+            return
+        
+        # Lista para almacenar los resultados finales
+        resultados = []
+        
+        total_rows = len(df_input)
+        progress_bar = st.progress(0)
+        
+        # Placeholders para mensajes de estado
+        message_placeholder = st.empty()
+        message_placeholder2 = st.empty()
 
-    with st.expander("¿Cómo usar esta herramienta?"):
-        st.write("""
-        1. Ingresa el tema general del examen (por ejemplo: Matemáticas).
-        2. Indica cuántas preguntas quieres por cada subtema.
-        3. Selecciona la dificultad.
-        4. Sube un Excel con la columna llamada 'subtema' (una fila por cada subtema).
-        5. Presiona "Generar Examen".
-        6. Obtendrás un examen combinado con cada subtema.
-        """)
+        # Recorrer cada fila del Excel
+        for idx, row in df_input.iterrows():
+            tema_general = row["Tema General"]
+            subtema = row["Sub Tema"]
+            try:
+                total_preguntas = int(row["Preguntas por Subtema"])
+            except Exception as e:
+                st.error(f"Error en la conversión de 'Preguntas por Subtema' en la fila {idx+1}: {e}")
+                continue
 
-    with st.form("form_examen"):
-        st.subheader("Parámetros del Examen")
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            tema = st.text_input("Tema general del examen", value="Matemáticas")
-            dificultad = st.selectbox("Dificultad", ["fácil", "medio", "difícil"])
-
-        with col2:
-            numero_preguntas = st.number_input(
-                "Número de preguntas por subtema",
-                min_value=1,
-                max_value=100,
-                value=5
+            message_placeholder.write(
+                f"**Generando preguntas para:** *{subtema}* (Tema: {tema_general}) con {total_preguntas} preguntas."
             )
-            api_key = st.text_input("Ingresa la API KEY de ChatGPT", value="Ingresa API KEY")
+            
+            # Generar las preguntas para este subtema
+            try:
+                preguntas = generar_preguntas_por_bloques(
+                    client, tema_general, subtema, total_preguntas, preguntas_por_bloque=total_preguntas
+                )
+            except Exception as e:
+                st.error(f"Error generando preguntas para el subtema {subtema}: {e}")
+                continue
 
-        with col3:
-            subtemas_file = st.file_uploader(
-                "Sube tu archivo Excel con la columna 'subtema'",
-                type=["xlsx"]
-            )
-
-        generar = st.form_submit_button("Generar Examen")
-
-    if generar:
-        if subtemas_file is None:
-            st.error("Por favor sube un archivo Excel con la columna 'subtema'.")
-        else:
-            with st.spinner("Generando el examen..."):
-                df_subtemas = pd.read_excel(subtemas_file)
+            if not preguntas:
+                st.error(f"No se generaron preguntas para el subtema: {subtema}")
+                continue
+            
+            # Procesar cada pregunta generada
+            for pregunta_dict in preguntas:
+                numero = pregunta_dict.get("numero", "")
+                pregunta_texto = pregunta_dict.get("texto", "")
+                message_placeholder2.write(f"Procesando pregunta #{numero}: {pregunta_texto}")
                 
-                if "subtema" not in df_subtemas.columns:
-                    st.error("El archivo Excel no contiene una columna llamada 'subtema'.")
+                try:
+                    respuesta_resultado = responder_pregunta(client, pregunta_texto, tema_general, subtema)
+                except Exception as e:
+                    respuesta_resultado = f"Error en la respuesta: {e}"
+                
+                # Verificar que la respuesta sea un diccionario con la estructura esperada
+                if isinstance(respuesta_resultado, dict):
+                    respuesta_correcta = respuesta_resultado.get("respuesta_correcta", "")
+                    opciones_incorrectas = respuesta_resultado.get("opciones_incorrectas", [])
+                    opcion1 = opciones_incorrectas[0] if len(opciones_incorrectas) > 0 else ""
+                    opcion2 = opciones_incorrectas[1] if len(opciones_incorrectas) > 1 else ""
+                    opcion3 = opciones_incorrectas[2] if len(opciones_incorrectas) > 2 else ""
+                    explicacion = respuesta_resultado.get("explicacion", "")
                 else:
-                    lista_subtemas = df_subtemas["subtema"].dropna().unique().tolist()
-                    examenes_por_subtema = []
-                    client = iniciar_cliente(api_key)
-
-                    for subtema in lista_subtemas:
-                        examen_del_subtema = pd.DataFrame()
-                        preguntas_examen = generar_preguntas_por_bloques(
-                            client, 
-                            tema, 
-                            subtema, 
-                            numero_preguntas, 
-                            preguntas_por_bloque=25
-                        )
-
-                        for pregunta in preguntas_examen:
-                            pregunta_contestada = responder_pregunta(client, pregunta, tema, subtema)
-                            pregunta_formato_df = procesar_respuesta(pregunta_contestada)
-                            examen_del_subtema = pd.concat(
-                                [examen_del_subtema, pregunta_formato_df],
-                                ignore_index=True
-                            )
-
-                        examenes_por_subtema.append((subtema, examen_del_subtema))
-
-            st.success("¡Examen generado con éxito!")
-
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zf:
-                for subtema, df_examen in examenes_por_subtema:
-                    excel_buffer = io.BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-                        df_examen.to_excel(writer, sheet_name="Sheet1", index=False)
-                    excel_filename = f"Examen_Subtema_{subtema}.xlsx"
-                    excel_filename = excel_filename.replace("/", "_").replace("\\", "_")
-                    zf.writestr(excel_filename, excel_buffer.getvalue())
-
-            zip_buffer.seek(0)
+                    respuesta_correcta = "Error"
+                    opcion1 = ""
+                    opcion2 = ""
+                    opcion3 = ""
+                    explicacion = str(respuesta_resultado)
+                
+                # Almacenar la información obtenida
+                resultados.append({
+                    "Tema General": tema_general,
+                    "Sub Tema": subtema,
+                    "Numero": numero,
+                    "Pregunta": pregunta_texto,
+                    "Respuesta Correcta": respuesta_correcta,
+                    "Opcion 1": opcion1,
+                    "Opcion 2": opcion2,
+                    "Opcion 3": opcion3,
+                    "Explicacion": explicacion
+                })
+            
+            # Actualizar el progreso de acuerdo a la fila procesada
+            progress_bar.progress((idx + 1) / total_rows)
+        
+        # Convertir los resultados en DataFrame y mostrarlos
+        if resultados:
+            df_resultados = pd.DataFrame(resultados)
+            st.success("Exámenes generados exitosamente.")
+            st.dataframe(df_resultados)
+            
+            # Crear un buffer en memoria para el archivo Excel
+            output = io.BytesIO()
+            # Guardar el DataFrame en el buffer usando to_excel. Se puede especificar engine si es necesario (por ejemplo, 'openpyxl')
+            df_resultados.to_excel(output, index=False, engine='openpyxl')
+            # Es importante volver al inicio del buffer
+            output.seek(0)
+            
             st.download_button(
-                label="Descargar Todos los Exámenes (ZIP)",
-                data=zip_buffer.getvalue(),
-                file_name=f"Examenes_{tema}_{dificultad}.zip",
-                mime="application/zip"
+                label="Descargar exámenes completos",
+                data=output,
+                file_name="examenes_completos.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+        else:
+            st.error("No se generaron exámenes.")

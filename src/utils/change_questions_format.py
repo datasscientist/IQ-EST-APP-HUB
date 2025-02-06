@@ -25,21 +25,20 @@ def formatear_preguntas(input_file):
     # 3. Añadimos la fila de encabezado fija para TutorLMS
     header = ["settings", "TÍTULO DE LA LECCIÓN", "RESUMEN DE LA LECCIÓN", 0, "minutes", "", 0, 80, 10, "", "", "rand", 200]
     formatted_data.append(header)
-
     # 4. Iteramos sobre cada pregunta en el DataFrame
     for idx, row in preguntas.iterrows():
         # Creamos la fila de la "pregunta"
         question_row = [
             "question",
-            row['PREGUNTA'],
-            "<p>" + (row['DESCRIPCIÓN DE LA PREGUNTA'] if isinstance(row['DESCRIPCIÓN DE LA PREGUNTA'], str) and row['DESCRIPCIÓN DE LA PREGUNTA'] else "") + "</p>",
+            row['Pregunta'],
+            "<p>" +  "" + "</p>",
             "single_choice",
             1,
             idx + 1,
             "",
             1,
             "",
-            "<p>" + (row['EXPLICACION'] if isinstance(row['EXPLICACION'], str) and row['EXPLICACION'] else "") + "</p>"
+            "<p>" + (row["Explicacion"] if isinstance(row["Explicacion"], str) and row["Explicacion"] else "") + "</p>"
         ]
         formatted_data.append(question_row)
 
@@ -48,12 +47,12 @@ def formatear_preguntas(input_file):
             # Nota: la columna 'OPCION INCORRECTA' podría estar en 'OPCION INCORRECTA', 'OPCION INCORRECTA.1', etc.
             # Ajustamos lógicamente el nombre de la columna dependiendo de j
             if j == 0:
-                respuesta_texto = row['OPCION CORRECTA']
+                respuesta_texto = row["Respuesta Correcta"]
             else:
-                # Para j=1 => 'OPCION INCORRECTA'
-                # Para j=2 => 'OPCION INCORRECTA.1'
-                # Para j=3 => 'OPCION INCORRECTA.2'
-                col_incorrecta = 'OPCION INCORRECTA' + (f'.{j-1}' if j > 1 else '')
+                # Para j=1 => 'Opcion 1'
+                # Para j=2 => 'Opcion 2'
+                # Para j=3 => 'Opcion 3'
+                col_incorrecta = "Opcion " + str(j)
                 respuesta_texto = row[col_incorrecta]
 
             answer_row = [
