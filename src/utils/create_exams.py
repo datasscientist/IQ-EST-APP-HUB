@@ -26,12 +26,15 @@ def generar_preguntas_por_bloques(client, tema_general: str, subtema: str, total
         prompt_bloque = f"""
 Eres un profesor y experto en {tema_general}.
 Estoy preparando un examen a manera de evaluación de mis alumnos. En particular, este examen abordará el subtema "{subtema}".
-Genera las preguntas desde la #{pregunta_inicial} hasta la #{pregunta_final}.
+Quiero que generes preguntas de opción múltiple desde la #{pregunta_inicial} hasta la #{pregunta_final}.
 
 Instrucciones:
-1. Las preguntas deben enfocarse en el subtema "{subtema}".
-2. No repitas preguntas de bloques anteriores.
-3. Devuelve la respuesta únicamente en formato JSON, con una lista llamada "preguntas". 
+1. Las preguntas deben ser exclusivamente de opción múltiple, con una sola respuesta correcta.
+2. Deben enfocarse en el subtema "{subtema}" y evaluar conceptos clave de manera precisa y objetiva.
+3. No quiero preguntas abiertas, de desarrollo, ni aquellas que requieran explicaciones largas, dibujos o ejemplos extensos.
+4. Las preguntas deben ser concretas y tener una redacción clara y concisa (una o dos oraciones como máximo).
+5. No repitas preguntas de bloques anteriores ni hagas preguntas demasiado similares dentro de este mismo bloque.
+6. Devuelve la respuesta únicamente en formato JSON, con una lista llamada "preguntas". 
    Cada elemento de la lista debe ser un objeto con las propiedades "numero" y "texto".
 
 Ejemplo del formato de salida:
